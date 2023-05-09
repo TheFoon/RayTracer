@@ -1,0 +1,19 @@
+[package]
+name = "rt03"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bytemuck = "1.13.1"
+cgmath = "0.18.0"
+egui = "0.21.0"
+egui_wgpu_backend = "0.22.0"
+egui_winit_platform = "0.18.0"
+env_logger = "0.10.0"
+log = "0.4.17"
+pollster = "0.3.0"
+wgpu = "0.16.0"
+winit = {version = "0.28.3", features = ["x11"]}
+
