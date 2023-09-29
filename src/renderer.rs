@@ -3,8 +3,8 @@ use winit::window::Window;
 pub struct Renderer {
     pub window: Window,
 
-    instance: wgpu::Instance,
-    adapter: wgpu::Adapter,
+    //instance: wgpu::Instance,
+    //adapter: wgpu::Adapter,
     device: wgpu::Device,
     surface: wgpu::Surface,
     surface_format: wgpu::TextureFormat,
@@ -231,10 +231,10 @@ impl Renderer {
 
         Renderer {
             window,
-            adapter,
+            //adapter,
             surface_format,
             storage_format,
-            instance,
+            //instance,
             surface,
             device,
             queue,
