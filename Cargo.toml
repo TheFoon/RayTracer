@@ -16,4 +16,5 @@ log = "0.4.17"
 pollster = "0.3.0"
 wgpu = "0.17.0"
 winit = {version = "0.28.3", features = ["x11"]}
+nalgebra-glm = {version = "0.18.0", features = ["convert-bytemuck"]}
 
