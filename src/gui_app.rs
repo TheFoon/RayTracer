@@ -5,7 +5,7 @@ impl GuiApp {
         Self {}
     }
 
-    pub fn ui(&mut self, ctx: &egui::Context, fps: f32) {
+    pub fn ui(&mut self, ctx: &egui::Context, fps: f32, frame_time: f32) {
         egui::Window::new("FPS")
         .anchor(egui::Align2::LEFT_TOP, egui::Vec2::new(10.0, 10.0))
         .title_bar(false)
@@ -15,6 +15,7 @@ impl GuiApp {
         .frame(egui::Frame::none())
         .show(ctx, |ui| {
             ui.label(format!("FPS: {:.2}", fps));
+            ui.label(format!("Frame Time: {:.2} ms", frame_time * 1000.0));
         });
     }
 }

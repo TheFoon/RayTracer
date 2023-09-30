@@ -1,14 +1,16 @@
+const MIN_T: f32 = 0.001f;
+const MAX_T: f32 = 1000.0f;
+
+const PI = 3.1415927f;
+const FRAC_1_PI = 0.31830987f;
+const FRAC_PI_2 = 1.5707964f;
+
+
 @group(0) @binding(0) var color_buffer: texture_storage_2d<rgba8unorm, write>;
 
-struct Sphere {
-    center: vec3<f32>,
-    radius: f32,
-}
+@group(1) @binding(0) var<storage, read> spheres: array<Sphere>;
 
-struct Ray {
-    direction: vec3<f32>,
-    origin: vec3<f32>,
-}
+
 
 fn length_squared(v: vec3<f32>) -> f32 {
     return v.x*v.x + v.y*v.y + v.z*v.z;
@@ -19,6 +21,8 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
 
     let screen_size: vec2<u32> = textureDimensions(color_buffer);
     let screen_pos : vec2<i32> = vec2<i32>(i32(GlobalInvocationID.x), i32(GlobalInvocationID.y));
+
+    var rngState = initRng(vec2(GlobalInvocationID.x, GlobalInvocationID.y), screen_size, 0u);
 
     let aspect_ratio = f32(screen_size.x) / f32(screen_size.y);
     let viewport_height = f32(screen_size.y) / 500.0;
@@ -38,7 +42,8 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
     ray.direction = normalize(upper_left_corner + u*horizontal - v*vertical - origin);
 
 
-    var pixel_color: vec3<f32> = ray_color(ray);
+    //var pixel_color: vec3<f32> = ray_color(ray);
+    var pixel_color: vec3<f32> = rayColor(ray, &rngState);
     //let num = f32(screen_pos.x) / f32(screen_size.x);
     //var pixel_color: vec3<f32> = vec3<f32>(num, num, num);
 
@@ -46,19 +51,20 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
 }
 
 fn ray_color(ray: Ray) -> vec3<f32> {
-    var mySphere: Sphere;
-    mySphere.center = vec3<f32>(0.0, 0.0, -1.0);
-    mySphere.radius = 0.5;
-    
     var pixel_color: vec3<f32>;
 
 
-    let t = hit(ray, mySphere);
-    if (t > 0.0) {
-        let N: vec3<f32> = normalize((ray.origin + normalize(ray.direction) * t) - vec3<f32>(0.0, 0.0, -1.0));
-        pixel_color = 0.5 * vec3<f32>(N.x+1.0, N.y+1.0, N.z+1.0);
+    var didHit: bool = false;
+    for (var i = 0u; i < arrayLength(&spheres); i = i + 1u) {
+        let t = hit(ray, spheres[i]);
+        if (t > 0.0) {
+            let N: vec3<f32> = normalize((ray.origin + normalize(ray.direction) * t) - vec3<f32>(0.0, 0.0, -1.0));
+            pixel_color = 0.5 * vec3<f32>(N.x+1.0, N.y+1.0, N.z+1.0);
+            didHit = true;
+            break;
+        }
     }
-    else {
+    if (!didHit) {
         let t = 0.5 * (ray.direction.y + 1.0);
         pixel_color = (1.0 - t) * vec3<f32>(1.0, 1.0, 1.0) + t * vec3<f32>(0.5, 0.7, 1.0);
     }
@@ -67,7 +73,7 @@ fn ray_color(ray: Ray) -> vec3<f32> {
 }
 
 fn hit(ray: Ray, sphere: Sphere) -> f32 {
-    let oc = ray.origin - sphere.center;
+    let oc = ray.origin - sphere.center.xyz;
     let a: f32 = length_squared(ray.direction);
     let half_b: f32 = dot(ray.direction, oc);
     let c: f32 = length_squared(oc) - sphere.radius * sphere.radius;
@@ -78,5 +84,243 @@ fn hit(ray: Ray, sphere: Sphere) -> f32 {
     } else {
         return (-half_b - sqrt(discriminant) ) / a;
     }
+}
+
+// models
+struct Sphere {
+    center: vec4<f32>,
+    radius: f32,
+    material_idx: u32,
+}
+
+struct Ray {
+    direction: vec3<f32>,
+    origin: vec3<f32>,
+}
+
+struct Scatter {
+    ray: Ray,
+    throughput: vec3<f32>,
+}
+
+struct Intersection {
+    p: vec3<f32>,
+    n: vec3<f32>,
+    u: f32,
+    v: f32,
+    t: f32,
+    material_idx: u32,
+    sphere_idx: u32,
+}
+
+struct Material {
+    id: u32,
+    desc1: TextureDescriptor,
+    desc2: TextureDescriptor,
+    x: f32,
+}
+
+struct TextureDescriptor {
+    width: u32,
+    height: u32,
+    offset: u32,
+}
+
+
+fn sphereIntersection(ray: Ray, sphere: Sphere, sphere_idx: u32, t: f32) -> Intersection {
+    let p = rayPointAtParameter(ray, t);
+    let n = (1f / sphere.radius) * (p - sphere.center.xyz);
+    let theta = acos(-n.y);
+    let phi = atan2(-n.z, n.x) + PI;
+    let u = 0.5 * FRAC_1_PI * phi;
+    let v = FRAC_1_PI * theta;
+
+    // TODO: passing sphereIdx in here just to pass it to Intersection
+    return Intersection(p, n, u, v, t, sphere.material_idx, sphere_idx);
+}
+
+fn rayPointAtParameter(ray: Ray, t: f32) -> vec3<f32> {
+    return ray.origin + t * ray.direction;
+}
+
+fn rayIntersectSphere(ray: Ray, sphereIdx: u32, tmin: f32, tmax: f32, hit: ptr<function, Intersection>) -> bool {
+    let sphere = spheres[sphereIdx];
+    let oc = ray.origin - sphere.center.xyz;
+    let a = dot(ray.direction, ray.direction);
+    let b = dot(oc, ray.direction);
+    let c = dot(oc, oc) - sphere.radius * sphere.radius;
+    let discriminant = b * b - a * c;
+
+    if discriminant > 0f {
+        var t = (-b - sqrt(discriminant)) / a;
+        if t < tmax && t > tmin {
+            *hit = sphereIntersection(ray, sphere, sphereIdx, t);
+            return true;
+        }
+
+        t = (-b + sqrt(discriminant)) / a;
+        if t < tmax && t > tmin {
+            *hit = sphereIntersection(ray, sphere, sphereIdx, t);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+fn intersect(ray: Ray, intersection: ptr<function, Intersection>) -> bool {
+    var closestT = MAX_T;
+    var closestIntersection = Intersection();
+
+    for (var idx = 0u; idx < arrayLength(&spheres); idx = idx + 1u) {
+        var testIntersect = Intersection();
+        if rayIntersectSphere(ray, idx, MIN_T, closestT, &testIntersect) {
+            closestT = testIntersect.t;
+            closestIntersection = testIntersect;
+        }
+    }
+
+    if closestT < MAX_T {
+        *intersection = closestIntersection;
+        return true;
+    }
+
+    return false;
+}
+
+fn rayColor(primaryRay: Ray, rngState: ptr<function, u32>) -> vec3<f32> {
+    var ray = primaryRay;
+
+    var color = vec3(0f);
+    var throughput = vec3(1f);
+
+    for (var bounce = 0u; bounce < 3u; bounce += 1u) {//bounce < samplingParams.numBounces
+        var intersection = Intersection();
+
+        if intersect(ray, &intersection) {
+            let material = Material();
+
+            var scatter = scatterRay(ray, intersection, material, rngState);
+            ray = scatter.ray;
+            throughput *= scatter.throughput;
+        } else {
+            // The ray missed. Output background color.
+            let t = 0.5 * (ray.direction.y + 1.0);
+            let sky_color = (1.0 - t) * vec3<f32>(1.0, 1.0, 1.0) + t * vec3<f32>(0.5, 0.7, 1.0);
+            color += throughput * sky_color;
+            break;
+        }
+    }
+
+    return color;
+}
+
+fn scatterRay(wo: Ray, hit: Intersection, material: Material, rngState: ptr<function, u32>) -> Scatter {
+    switch material.id {
+        default: {
+            return scatterMissingMaterial(hit, rngState);
+        }
+    }
+}
+
+fn scatterMissingMaterial(hit: Intersection, rngState: ptr<function, u32>) -> Scatter {
+    let scatterDirection = hit.n + rngNextVec3InUnitSphere(rngState);
+    // An aggressive pink color to indicate an error
+    let albedo = vec3(0.5f, 0.7f, 0.9f);
+    return Scatter(Ray(hit.p, scatterDirection), albedo);
+}
+
+
+
+
+// random number generation
+
+fn rngNextInCosineWeightedHemisphere(state: ptr<function, u32>) -> vec3<f32> {
+    let r1 = rngNextFloat(state);
+    let r2 = rngNextFloat(state);
+    let sqrt_r2 = sqrt(r2);
+
+    let z = sqrt(1f - r2);
+    let phi = 2f * PI * r1;
+    let x = cos(phi) * sqrt_r2;
+    let y = sin(phi) * sqrt_r2;
+
+    return vec3<f32>(x, y, z);
+}
+
+fn rngNextInUnitHemisphere(state: ptr<function, u32>) -> vec3<f32> {
+    let r1 = rngNextFloat(state);
+    let r2 = rngNextFloat(state);
+
+    let phi = 2f * PI * r1;
+    let sinTheta = sqrt(1f - r2 * r2);
+
+    let x = cos(phi) * sinTheta;
+    let y = sin(phi) * sinTheta;
+    let z = r2;
+
+    return vec3(x, y, z);
+}
+
+fn rngNextVec3InUnitDisk(state: ptr<function, u32>) -> vec3<f32> {
+    // Generate numbers uniformly in a disk:
+    // https://stats.stackexchange.com/a/481559
+
+    // r^2 is distributed as U(0, 1).
+    let r = sqrt(rngNextFloat(state));
+    let alpha = 2f * PI * rngNextFloat(state);
+
+    let x = r * cos(alpha);
+    let y = r * sin(alpha);
+
+    return vec3(x, y, 0f);
+}
+
+fn rngNextVec3InUnitSphere(state: ptr<function, u32>) -> vec3<f32> {
+    // probability density is uniformly distributed over r^3
+    let r = pow(rngNextFloat(state), 0.33333f);
+    let theta = PI * rngNextFloat(state);
+    let phi = 2f * PI * rngNextFloat(state);
+
+    let x = r * sin(theta) * cos(phi);
+    let y = r * sin(theta) * sin(phi);
+    let z = r * cos(theta);
+
+    return vec3(x, y, z);
+}
+
+fn rngNextUintInRange(state: ptr<function, u32>, min: u32, max: u32) -> u32 {
+    rngNextInt(state);
+    return min + (*state) % (max - min);
+}
+
+fn rngNextFloat(state: ptr<function, u32>) -> f32 {
+    rngNextInt(state);
+    return f32(*state) / f32(0xffffffffu);
+}
+
+fn initRng(pixel: vec2<u32>, resolution: vec2<u32>, frame: u32) -> u32 {
+    // Adapted from https://github.com/boksajak/referencePT
+    let seed = dot(pixel, vec2<u32>(1u, resolution.x)) ^ jenkinsHash(frame);
+    return jenkinsHash(seed);
+}
+
+fn rngNextInt(state: ptr<function, u32>) {
+    // PCG random number generator
+    // Based on https://www.shadertoy.com/view/XlGcRh
+
+    let oldState = *state + 747796405u + 2891336453u;
+    let word = ((oldState >> ((oldState >> 28u) + 4u)) ^ oldState) * 277803737u;
+    *state = (word >> 22u) ^ word;
+}
+
+fn jenkinsHash(input: u32) -> u32 {
+    var x = input;
+    x += x << 10u;
+    x ^= x >> 6u;
+    x += x << 3u;
+    x ^= x >> 11u;
+    x += x << 15u;
+    return x;
 }
 

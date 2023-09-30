@@ -4,9 +4,13 @@ use winit::{
     window::WindowBuilder,
 };
 
+pub extern crate nalgebra_glm as glm;
+
 mod renderer;
 mod fps_counter;
 mod gui_app;
+mod sphere;
+mod gpu_buffer;
 use renderer::Renderer;
 
 use wgpu;
@@ -21,7 +25,18 @@ fn main() {
         .build(&event_loop)
         .unwrap();
 
-    let mut renderer = pollster::block_on(Renderer::new(window));
+    let spheres = vec![
+        sphere::Sphere::new(glm::vec3(0.0, 0.0, -1.0), 0.5, 1),
+        sphere::Sphere::new(glm::vec3(-1.0, 0.0, -2.0), 1.0, 1),
+        sphere::Sphere::new(glm::vec3(3.0, 2.0, -4.0), 1.0, 1),
+        sphere::Sphere::new(glm::vec3(-0.2, 0.0, -0.3), 0.3, 1),
+        //sphere::Sphere::new(glm::vec3(0.0, 0.0, 8.0), 1.0, 1),
+        //sphere::Sphere::new(glm::vec3(0.0, 0.0, 10.0), 1.0, 1),
+        //sphere::Sphere::new(glm::vec3(0.0, 0.0, 12.0), 1.0, 1),
+        //sphere::Sphere::new(glm::vec3(0.0, 0.0, 12.0), 1.0, 1),
+    ];
+
+    let mut renderer = pollster::block_on(Renderer::new(window, spheres));
 
     let start_time = std::time::Instant::now();
     let mut last_time = std::time::Instant::now();

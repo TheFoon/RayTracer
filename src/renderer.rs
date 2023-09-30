@@ -2,6 +2,8 @@ use winit::window::Window;
 
 use crate::fps_counter::FpsCounter;
 use crate::gui_app::GuiApp;
+use crate::gpu_buffer::StorageBuffer;
+use crate::sphere::Sphere;
 use egui_wgpu_backend::{RenderPass, ScreenDescriptor};
 use egui_winit_platform::{Platform, PlatformDescriptor};
 
@@ -27,6 +29,10 @@ pub struct Renderer {
     screen_pipeline: wgpu::RenderPipeline,
     screen_bind_group: wgpu::BindGroup,
 
+    //scene stuff
+    scene_bind_group: wgpu::BindGroup,
+    scene_bind_group_layout: wgpu::BindGroupLayout,
+
     //egui stuff
     fps_counter: FpsCounter,
     pub platform: egui_winit_platform::Platform,
@@ -35,7 +41,7 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub async fn new(window: Window) -> Self {
+    pub async fn new(window: Window, spheres: Vec<Sphere>) -> Self {
         // Create the instance, adapter, device, and queue, and setup the surface
         let size = window.inner_size();
 
@@ -149,9 +155,30 @@ impl Renderer {
             }],
         });
 
+
+        // scene stuff (buffers and bind groups)
+        let sphere_buffer = StorageBuffer::new_from_bytes(
+            &device,
+            bytemuck::cast_slice(spheres.as_slice()),
+            0,
+            Some("Sphere Buffer"),
+        );
+
+        let scene_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Scene Bind Group Layout"),
+            entries: &[sphere_buffer.layout(wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::FRAGMENT, true)],
+        });
+
+        let scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Scene Bind Group"),
+            layout: &scene_bind_group_layout,
+            entries: &[sphere_buffer.binding()],
+        });
+
+
         let ray_tracing_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Ray Tracing Pipeline Layout"),
-            bind_group_layouts: &[&ray_tracing_bind_group_layout],
+            bind_group_layouts: &[&ray_tracing_bind_group_layout, &scene_bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -274,6 +301,8 @@ impl Renderer {
             platform,
             gui_app,
             egui_renderpass,
+            scene_bind_group,
+            scene_bind_group_layout,
         }
     }
 
@@ -288,6 +317,7 @@ impl Renderer {
             });
             ray_trace_pass.set_pipeline(&self.ray_tracing_pipeline);
             ray_trace_pass.set_bind_group(0, &self.ray_tracing_bind_group, &[]);
+            ray_trace_pass.set_bind_group(1, &self.scene_bind_group, &[]);
             ray_trace_pass.dispatch_workgroups(self.size.width, self.size.height, 1);
         }
 
@@ -318,7 +348,7 @@ impl Renderer {
         // egui render pass
         
         self.platform.begin_frame();
-        self.gui_app.ui(&self.platform.context(), self.fps_counter.average_fps());
+        self.gui_app.ui(&self.platform.context(), self.fps_counter.average_fps(), self.fps_counter.average_frame_time());
 
         let full_output = self.platform.end_frame(Some(&self.window));
         let paint_jobs = self.platform.context().tessellate(full_output.shapes);
@@ -398,7 +428,7 @@ impl Renderer {
 
         let ray_tracing_pipeline_layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Ray Tracing Pipeline Layout"),
-            bind_group_layouts: &[&ray_tracing_bind_group_layout],
+            bind_group_layouts: &[&ray_tracing_bind_group_layout, &self.scene_bind_group_layout],
             push_constant_ranges: &[],
         });
 
