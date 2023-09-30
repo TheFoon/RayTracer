@@ -5,6 +5,8 @@ use winit::{
 };
 
 mod renderer;
+mod fps_counter;
+mod gui_app;
 use renderer::Renderer;
 
 use wgpu;
@@ -21,7 +23,12 @@ fn main() {
 
     let mut renderer = pollster::block_on(Renderer::new(window));
 
+    let start_time = std::time::Instant::now();
+    let mut last_time = std::time::Instant::now();
+
     event_loop.run(move |event, _, control_flow| {
+        renderer.platform.handle_event(&event);
+
         match event {
             Event::WindowEvent {
                 ref event,
@@ -39,6 +46,7 @@ fn main() {
                 }
             }
             Event::RedrawRequested(_) => {
+                renderer.platform.update_time(start_time.elapsed().as_secs_f64());//TODO: maybe this can be moved to renderer.update()?
                 match renderer.render() {
                     Ok(_) => {}
                     // Recreate the swap_chain if lost
@@ -50,6 +58,11 @@ fn main() {
                 }
             }
             Event::MainEventsCleared => {
+                {
+                    let delta_time = last_time.elapsed().as_secs_f32();
+                    last_time = std::time::Instant::now();
+                    renderer.update(delta_time);
+                }
                 renderer.window.request_redraw();
             }
             _ => {}

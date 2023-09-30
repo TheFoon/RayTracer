@@ -1,5 +1,10 @@
 use winit::window::Window;
 
+use crate::fps_counter::FpsCounter;
+use crate::gui_app::GuiApp;
+use egui_wgpu_backend::{RenderPass, ScreenDescriptor};
+use egui_winit_platform::{Platform, PlatformDescriptor};
+
 pub struct Renderer {
     pub window: Window,
 
@@ -21,6 +26,12 @@ pub struct Renderer {
     ray_tracing_bind_group: wgpu::BindGroup,
     screen_pipeline: wgpu::RenderPipeline,
     screen_bind_group: wgpu::BindGroup,
+
+    //egui stuff
+    fps_counter: FpsCounter,
+    pub platform: egui_winit_platform::Platform,
+    gui_app: GuiApp,
+    egui_renderpass: RenderPass,
 }
 
 impl Renderer {
@@ -229,6 +240,18 @@ impl Renderer {
             multiview: None,
         });
 
+        // egui stuff
+        let fps_counter = FpsCounter::new();
+        let platform: Platform = Platform::new(PlatformDescriptor {
+            physical_width: size.width as u32,
+            physical_height: size.height as u32,
+            scale_factor: window.scale_factor(),
+            font_definitions: egui::FontDefinitions::default(),
+            style: Default::default(),
+        });
+        let gui_app = GuiApp::new();
+        let egui_renderpass = RenderPass::new(&device, surface_format, 1);
+
         Renderer {
             window,
             //adapter,
@@ -247,10 +270,14 @@ impl Renderer {
             ray_tracing_pipeline,
             screen_bind_group,
             screen_pipeline,
+            fps_counter,
+            platform,
+            gui_app,
+            egui_renderpass,
         }
     }
 
-    pub fn render(&self) -> Result<(), wgpu::SurfaceError> {
+    pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
         });
@@ -288,9 +315,34 @@ impl Renderer {
             render_pass.set_bind_group(0, &self.screen_bind_group, &[]);
             render_pass.draw(0..6, 0..1);
         }
+        // egui render pass
+        
+        self.platform.begin_frame();
+        self.gui_app.ui(&self.platform.context(), self.fps_counter.average_fps());
+
+        let full_output = self.platform.end_frame(Some(&self.window));
+        let paint_jobs = self.platform.context().tessellate(full_output.shapes);
+
+        let screen_descriptor = ScreenDescriptor {
+            physical_width: self.size.width,
+            physical_height: self.size.height,
+            scale_factor: self.window.scale_factor() as f32,
+        };
+        let tdelta: egui::TexturesDelta = full_output.textures_delta;
+        self.egui_renderpass.add_textures(&self.device, &self.queue, &tdelta).expect("Failed to add textures");
+        self.egui_renderpass.update_buffers(&self.device, &self.queue, &paint_jobs, &screen_descriptor);
+        self.egui_renderpass.execute(
+            &mut encoder,
+            &texture_view,
+            &paint_jobs,
+            &screen_descriptor,
+            None
+        ).unwrap();
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
+
+        self.egui_renderpass.remove_textures(tdelta).expect("Failed to remove textures");
 
         Ok(())
     }
@@ -434,5 +486,10 @@ impl Renderer {
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
         });
+    }
+
+    pub fn update(&mut self, _delta_time: f32) {
+        self.fps_counter.update(_delta_time);
+        //println!("FPS: {}", self.fps_counter.average_fps());
     }
 }

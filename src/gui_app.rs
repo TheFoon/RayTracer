@@ -1,0 +1,20 @@
+pub struct GuiApp {}
+
+impl GuiApp {
+    pub fn new() -> Self {
+        Self {}
+    }
+
+    pub fn ui(&mut self, ctx: &egui::Context, fps: f32) {
+        egui::Window::new("FPS")
+        .anchor(egui::Align2::LEFT_TOP, egui::Vec2::new(10.0, 10.0))
+        .title_bar(false)
+        .resizable(false)
+        .interactable(false)
+        .collapsible(false)
+        .frame(egui::Frame::none())
+        .show(ctx, |ui| {
+            ui.label(format!("FPS: {:.2}", fps));
+        });
+    }
+}
