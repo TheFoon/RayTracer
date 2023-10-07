@@ -1,6 +1,7 @@
 use winit::window::Window;
 
-use crate::fps_counter::FpsCounter;
+use crate::scene::{Material, GpuMaterial};
+use crate::{fps_counter::FpsCounter, scene::Scene};
 use crate::gui_app::GuiApp;
 use crate::gpu_buffer::StorageBuffer;
 use crate::sphere::Sphere;
@@ -41,7 +42,7 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub async fn new(window: Window, spheres: Vec<Sphere>) -> Self {
+    pub async fn new(window: Window, scene: Scene) -> Self {
         // Create the instance, adapter, device, and queue, and setup the surface
         let size = window.inner_size();
 
@@ -157,23 +158,96 @@ impl Renderer {
 
 
         // scene stuff (buffers and bind groups)
-        let sphere_buffer = StorageBuffer::new_from_bytes(
-            &device,
-            bytemuck::cast_slice(spheres.as_slice()),
-            0,
-            Some("Sphere Buffer"),
-        );
+        let (scene_bind_group_layout, scene_bind_group) = {
+            let sphere_buffer = StorageBuffer::new_from_bytes(
+                &device,
+                bytemuck::cast_slice(scene.spheres.as_slice()),
+                0_u32,
+                Some("scene buffer"),
+            );
 
-        let scene_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Scene Bind Group Layout"),
-            entries: &[sphere_buffer.layout(wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::FRAGMENT, true)],
-        });
+            let mut global_texture_data: Vec<[f32; 3]> = Vec::new();
+            let mut material_data: Vec<GpuMaterial> = Vec::with_capacity(scene.materials.len());
 
-        let scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Scene Bind Group"),
-            layout: &scene_bind_group_layout,
-            entries: &[sphere_buffer.binding()],
-        });
+            for material in scene.materials.iter() {
+                let gpu_material = match material {
+                    Material::Lambertian { albedo } => {
+                        GpuMaterial::lambertian(albedo, &mut global_texture_data)
+                    }
+                    Material::Metal { albedo, fuzz } => {
+                        GpuMaterial::metal(albedo, *fuzz, &mut global_texture_data)
+                    }
+                    Material::Dielectric { refraction_index } => {
+                        GpuMaterial::dielectric(*refraction_index)
+                    }
+                    Material::Checkerboard { odd, even } => {
+                        GpuMaterial::checkerboard(odd, even, &mut global_texture_data)
+                    }
+                    Material::Emissive { emit } => {
+                        GpuMaterial::emissive(emit, &mut global_texture_data)
+                    }
+                };
+
+                material_data.push(gpu_material);
+            }
+
+            let material_buffer = StorageBuffer::new_from_bytes(
+                &device,
+                bytemuck::cast_slice(material_data.as_slice()),
+                1_u32,
+                Some("materials buffer"),
+            );
+
+            let texture_buffer = StorageBuffer::new_from_bytes(
+                &device,
+                bytemuck::cast_slice(global_texture_data.as_slice()),
+                2_u32,
+                Some("textures buffer"),
+            );
+
+            let light_indices: Vec<u32> = scene
+                .spheres
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| {
+                    matches!(
+                        scene.materials[s.material_idx as usize],
+                        Material::Emissive { .. }
+                    )
+                })
+                .map(|(idx, _)| idx as u32)
+                .collect();
+
+            let light_buffer = StorageBuffer::new_from_bytes(
+                &device,
+                bytemuck::cast_slice(light_indices.as_slice()),
+                3_u32,
+                Some("lights buffer"),
+            );
+
+            let scene_bind_group_layout =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    entries: &[
+                        sphere_buffer.layout(wgpu::ShaderStages::COMPUTE, true),
+                        material_buffer.layout(wgpu::ShaderStages::COMPUTE, true),
+                        texture_buffer.layout(wgpu::ShaderStages::COMPUTE, true),
+                        light_buffer.layout(wgpu::ShaderStages::COMPUTE, true),
+                    ],
+                    label: Some("scene layout"),
+                });
+            let scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: &scene_bind_group_layout,
+                entries: &[
+                    sphere_buffer.binding(),
+                    material_buffer.binding(),
+                    texture_buffer.binding(),
+                    light_buffer.binding(),
+                ],
+                label: Some("scene bind group"),
+            });
+
+            (scene_bind_group_layout, scene_bind_group)
+        };
 
 
         let ray_tracing_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

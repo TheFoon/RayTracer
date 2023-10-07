@@ -11,7 +11,11 @@ mod fps_counter;
 mod gui_app;
 mod sphere;
 mod gpu_buffer;
+mod scene;
 use renderer::Renderer;
+
+use scene::{Material, Scene, Texture};
+use sphere::Sphere;
 
 use wgpu;
 
@@ -35,8 +39,9 @@ fn main() {
         //sphere::Sphere::new(glm::vec3(0.0, 0.0, 12.0), 1.0, 1),
         //sphere::Sphere::new(glm::vec3(0.0, 0.0, 12.0), 1.0, 1),
     ];
+    let scene = setup_scene();
 
-    let mut renderer = pollster::block_on(Renderer::new(window, spheres));
+    let mut renderer = pollster::block_on(Renderer::new(window, scene));
 
     let start_time = std::time::Instant::now();
     let mut last_time = std::time::Instant::now();
@@ -85,3 +90,61 @@ fn main() {
     });
 }
 
+
+fn setup_scene() -> scene::Scene {
+    let materials = vec![
+        Material::Checkerboard {
+            even: Texture::new_from_color(glm::vec3(0.5_f32, 0.7_f32, 0.8_f32)),
+            odd: Texture::new_from_color(glm::vec3(0.9_f32, 0.9_f32, 0.9_f32)),
+        },
+        Material::Lambertian {
+            albedo: Texture::new_from_image("assets/moon.jpeg")
+                .expect("Hardcoded path should be valid"),
+        },
+        Material::Metal {
+            albedo: Texture::new_from_color(glm::vec3(1_f32, 0.85_f32, 0.57_f32)),
+            fuzz: 0.0_f32,
+        },
+        Material::Dielectric {
+            refraction_index: 1.5_f32,
+        },
+        Material::Lambertian {
+            albedo: Texture::new_from_image("assets/earthmap.jpeg")
+                .expect("Hardcoded path should be valid"),
+        },
+        Material::Emissive {
+            emit: Texture::new_from_scaled_image("assets/sun.jpeg", 50.0)
+                .expect("Hardcoded path should be valid"),
+        },
+        Material::Lambertian {
+            albedo: Texture::new_from_color(glm::vec3(0.3_f32, 0.9_f32, 0.9_f32)),
+        },
+        Material::Emissive {
+            emit: Texture::new_from_color(glm::vec3(50.0_f32, 0.0_f32, 0.0_f32)),
+        },
+        Material::Emissive {
+            emit: Texture::new_from_color(glm::vec3(0.0_f32, 50.0_f32, 0.0_f32)),
+        },
+        Material::Emissive {
+            emit: Texture::new_from_color(glm::vec3(0.0, 0.0, 50.0)),
+        },
+    ];
+
+    let spheres = vec![
+        Sphere::new(glm::vec3(0.0, -510.0, -1.0), 500.0, 9_u32),
+        // left row
+        Sphere::new(glm::vec3(-2.0, 0.0, -3.0), 1.0, 2_u32),
+        //Sphere::new(glm::vec3(0.0, 0.0, -3.0), 1.0, 1_u32),
+        Sphere::new(glm::vec3(2.0, 0.0, -3.0), 1.0, 2_u32),
+        // middle row
+        //Sphere::new(glm::vec3(-5.0, 1.0, 0.0), 1.0, 2_u32),
+        //Sphere::new(glm::vec3(0.0, 1.0, 0.0), 1.0, 3_u32),
+        //Sphere::new(glm::vec3(5.0, 1.0, 0.0), 1.0, 6_u32),
+        // right row
+        //Sphere::new(glm::vec3(-5.0, 0.8, 4.0), 0.8, 1_u32),
+        //Sphere::new(glm::vec3(0.0, 1.2, 4.0), 1.2, 4_u32),
+        //Sphere::new(glm::vec3(5.0, 2.0, 4.0), 2.0, 5_u32),
+    ];
+
+    Scene { spheres, materials }
+}

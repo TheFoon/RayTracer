@@ -1,3 +1,5 @@
+const EPSILON = 0.001f;
+
 const MIN_T: f32 = 0.001f;
 const MAX_T: f32 = 1000.0f;
 
@@ -9,6 +11,9 @@ const FRAC_PI_2 = 1.5707964f;
 @group(0) @binding(0) var color_buffer: texture_storage_2d<rgba8unorm, write>;
 
 @group(1) @binding(0) var<storage, read> spheres: array<Sphere>;
+@group(1) @binding(1) var<storage, read> materials: array<Material>;
+@group(1) @binding(2) var<storage, read> textures: array<array<f32, 3>>;
+@group(1) @binding(3) var<storage, read> lights: array<u32>;
 
 
 
@@ -158,11 +163,11 @@ fn rayIntersectSphere(ray: Ray, sphereIdx: u32, tmin: f32, tmax: f32, hit: ptr<f
             return true;
         }
 
-        t = (-b + sqrt(discriminant)) / a;
-        if t < tmax && t > tmin {
-            *hit = sphereIntersection(ray, sphere, sphereIdx, t);
-            return true;
-        }
+        //t = (-b + sqrt(discriminant)) / a;
+        //if t < tmax && t > tmin {
+        //    *hit = sphereIntersection(ray, sphere, sphereIdx, t);
+        //    return true;
+        //}
     }
 
     return false;
@@ -194,11 +199,18 @@ fn rayColor(primaryRay: Ray, rngState: ptr<function, u32>) -> vec3<f32> {
     var color = vec3(0f);
     var throughput = vec3(1f);
 
-    for (var bounce = 0u; bounce < 3u; bounce += 1u) {//bounce < samplingParams.numBounces
+    for (var bounce = 0u; bounce < 10u; bounce += 1u) {//bounce < samplingParams.numBounces
         var intersection = Intersection();
 
         if intersect(ray, &intersection) {
-            let material = Material();
+            let material = materials[intersection.material_idx];
+
+            if material.id == 4u {
+                let emissionTexture = material.desc1;
+                let emissionColor = textureLookup(emissionTexture, intersection.u, intersection.v);
+                color += throughput * emissionColor;
+                break;
+            }
 
             var scatter = scatterRay(ray, intersection, material, rngState);
             ray = scatter.ray;
@@ -217,6 +229,17 @@ fn rayColor(primaryRay: Ray, rngState: ptr<function, u32>) -> vec3<f32> {
 
 fn scatterRay(wo: Ray, hit: Intersection, material: Material, rngState: ptr<function, u32>) -> Scatter {
     switch material.id {
+        case 0u: {
+            let texture = material.desc1;
+            return scatterMixtureDensity(hit, texture, rngState);
+        }
+
+        case 1u: {
+            let texture = material.desc1;
+            let fuzz = material.x;
+            return scatterMetal(wo, hit, texture, fuzz, rngState);
+        }
+
         default: {
             return scatterMissingMaterial(hit, rngState);
         }
@@ -230,7 +253,110 @@ fn scatterMissingMaterial(hit: Intersection, rngState: ptr<function, u32>) -> Sc
     return Scatter(Ray(hit.p, scatterDirection), albedo);
 }
 
+fn textureLookup(desc: TextureDescriptor, u: f32, v: f32) -> vec3<f32> {
+    let u_ = clamp(u, 0f, 1f);
+    let v_ = 1f - clamp(v, 0f, 1f);
 
+    let j = u32(u_ * f32(desc.width));
+    let i = u32(v_ * f32(desc.height));
+    let idx = i * desc.width + j;
+
+    let elem = textures[desc.offset + idx];
+    return vec3(elem[0u], elem[1u], elem[2u]);
+}
+
+fn scatterMixtureDensity(hit: Intersection, albedo: TextureDescriptor, rngState: ptr<function, u32>) -> Scatter {
+    let scatterDirection = sampleMixtureDensity(hit, rngState);
+    let materialValue = evalLambertian(hit, albedo, scatterDirection);
+    let materialPdf = pdfLambertian(hit, scatterDirection);
+    let lightPdf = pdfLight(hit, scatterDirection);
+    let throughput = materialValue / max(EPSILON, (0.5f * materialPdf + 0.5f * lightPdf));
+    return Scatter(Ray(hit.p, scatterDirection), throughput);
+}
+
+fn sampleMixtureDensity(hit: Intersection, rngState: ptr<function, u32>) -> vec3<f32> {
+    if rngNextFloat(rngState) < 0.5f {
+        return sampleLambertian(hit, rngState);
+    } else {
+        return sampleLight(hit, rngState);
+    }
+}
+
+fn evalLambertian(hit: Intersection, texture: TextureDescriptor, wi: vec3<f32>) -> vec3<f32> {
+    return textureLookup(texture, hit.u, hit.v) * FRAC_1_PI * max(EPSILON, dot(hit.n, wi));
+}
+
+fn sampleLambertian(hit: Intersection, rngState: ptr<function, u32>) -> vec3<f32> {
+    let v = rngNextInCosineWeightedHemisphere(rngState);
+    let onb = pixarOnb(hit.n);
+    return onb * v;
+}
+
+fn pdfLambertian(hit: Intersection, wi: vec3<f32>) -> f32 {
+    return max(EPSILON, dot(hit.n, wi) * FRAC_1_PI);
+}
+
+fn sampleLight(hit: Intersection, rngState: ptr<function, u32>) -> vec3<f32> {
+    // Select a random light using a uniform distribution.
+    let numLights = arrayLength(&lights);   // TODO: what about when there are no lights?
+    let lightIdx = rngNextUintInRange(rngState, 0u, numLights - 1u);
+    let sphereIdx = lights[lightIdx];
+    let sphere = spheres[sphereIdx];
+
+    return sampleHemisphere(hit, sphere, rngState);
+}
+
+fn sampleHemisphere(hit: Intersection, sphere: Sphere, rngState: ptr<function, u32>) -> vec3<f32> {
+    let v = rngNextInUnitHemisphere(rngState);
+
+    // Sample the hemisphere facing the intersection point.
+    let dir = normalize(hit.p - sphere.center.xyz);
+    let onb = pixarOnb(dir);
+
+    let pointOnSphere = sphere.center.xyz + onb * sphere.radius * v;
+    let toPointOnSphere = pointOnSphere - hit.p;
+
+    return normalize(toPointOnSphere);
+}
+
+fn pdfLight(hit: Intersection, wi: vec3<f32>) -> f32 {
+    let ray = Ray(hit.p, wi);
+    var lightHit = Intersection();
+    var pdf = 0f;
+
+    if intersect(ray, &lightHit) {
+        let sphereIdx = lightHit.sphere_idx;
+        let sphere = spheres[sphereIdx];
+        let numSpheres = arrayLength(&spheres);
+        let toLight = lightHit.p - hit.p;
+        let lengthSqr = dot(toLight, toLight);
+        let cosine = abs(dot(wi, lightHit.n));
+        let areaHalfSphere = 2f * PI * sphere.radius * sphere.radius;
+
+        // lengthSqr / cosine is the inverse of the geometric factor, as defined in
+        // "MULTIPLE IMPORTANCE SAMPLING 101".
+        pdf = lengthSqr / max(EPSILON, cosine * areaHalfSphere * f32(numSpheres));
+    }
+
+    return pdf;
+}
+
+fn pixarOnb(n: vec3<f32>) -> mat3x3<f32> {
+    // https://www.jcgt.org/published/0006/01/01/paper-lowres.pdf
+    let s = select(-1f, 1f, n.z >= 0f);
+    let a = -1f / (s + n.z);
+    let b = n.x * n.y * a;
+    let u = vec3<f32>(1f + s * n.x * n.x * a, s * b, -s * n.x);
+    let v = vec3<f32>(b, s + n.y * n.y * a, -n.y);
+
+    return mat3x3<f32>(u, v, n);
+}
+
+fn scatterMetal(wo: Ray, hit: Intersection, texture: TextureDescriptor, fuzz: f32, rngState: ptr<function, u32>) -> Scatter {
+    let scatterDirection = reflect(wo.direction, hit.n) + fuzz * rngNextVec3InUnitSphere(rngState);
+    let albedo = textureLookup(texture, hit.u, hit.v);
+    return Scatter(Ray(hit.p, scatterDirection), albedo);
+}
 
 
 // random number generation

@@ -3,7 +3,7 @@
 pub struct Sphere {
     pub center: glm::Vec4,
     pub radius: f32,
-    material_idx: u32,
+    pub material_idx: u32,
     _padding: [u32; 2],
 }
 
