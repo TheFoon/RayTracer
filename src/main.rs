@@ -103,6 +103,10 @@ fn setup_scene() -> scene::Scene {
         },
         Material::Metal {
             albedo: Texture::new_from_color(glm::vec3(1_f32, 0.85_f32, 0.57_f32)),
+            fuzz: 0.3_f32,
+        },
+        Material::Metal {
+            albedo: Texture::new_from_color(glm::vec3(0.5_f32, 0.85_f32, 1_f32)),
             fuzz: 0.0_f32,
         },
         Material::Dielectric {
@@ -131,11 +135,11 @@ fn setup_scene() -> scene::Scene {
     ];
 
     let spheres = vec![
-        Sphere::new(glm::vec3(0.0, -510.0, -1.0), 500.0, 9_u32),
+        Sphere::new(glm::vec3(0.0, -510.0, -1.0), 500.0, 10_u32),
         // left row
         Sphere::new(glm::vec3(-2.0, 0.0, -3.0), 1.0, 2_u32),
         //Sphere::new(glm::vec3(0.0, 0.0, -3.0), 1.0, 1_u32),
-        Sphere::new(glm::vec3(2.0, 0.0, -3.0), 1.0, 2_u32),
+        Sphere::new(glm::vec3(2.0, 0.0, -3.0), 1.0, 3_u32),
         // middle row
         //Sphere::new(glm::vec3(-5.0, 1.0, 0.0), 1.0, 2_u32),
         //Sphere::new(glm::vec3(0.0, 1.0, 0.0), 1.0, 3_u32),

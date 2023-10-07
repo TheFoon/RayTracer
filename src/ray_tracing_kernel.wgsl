@@ -156,18 +156,18 @@ fn rayIntersectSphere(ray: Ray, sphereIdx: u32, tmin: f32, tmax: f32, hit: ptr<f
     let c = dot(oc, oc) - sphere.radius * sphere.radius;
     let discriminant = b * b - a * c;
 
-    if discriminant > 0f {
+    if discriminant >= 0f {
         var t = (-b - sqrt(discriminant)) / a;
         if t < tmax && t > tmin {
             *hit = sphereIntersection(ray, sphere, sphereIdx, t);
             return true;
         }
 
-        //t = (-b + sqrt(discriminant)) / a;
-        //if t < tmax && t > tmin {
-        //    *hit = sphereIntersection(ray, sphere, sphereIdx, t);
-        //    return true;
-        //}
+        t = (-b + sqrt(discriminant)) / a;
+        if t < tmax && t > tmin {
+            *hit = sphereIntersection(ray, sphere, sphereIdx, t);
+            return true;
+        }
     }
 
     return false;
@@ -355,7 +355,7 @@ fn pixarOnb(n: vec3<f32>) -> mat3x3<f32> {
 fn scatterMetal(wo: Ray, hit: Intersection, texture: TextureDescriptor, fuzz: f32, rngState: ptr<function, u32>) -> Scatter {
     let scatterDirection = reflect(wo.direction, hit.n) + fuzz * rngNextVec3InUnitSphere(rngState);
     let albedo = textureLookup(texture, hit.u, hit.v);
-    return Scatter(Ray(hit.p, scatterDirection), albedo);
+    return Scatter(Ray(scatterDirection, hit.p), albedo);
 }
 
 
